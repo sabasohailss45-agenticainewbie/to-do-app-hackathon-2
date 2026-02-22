@@ -52,34 +52,45 @@ class ChatMessage(BaseModel):
 # ─── Chat Endpoint ─────────────────────────────────────────────────────────────
 
 @app.post("/chat")
-async def chat(payload: ChatMessage):
+async def chat(payload: ChatMessage, session: AsyncSession = Depends(get_session)):
     """AI chatbot endpoint — takes a user message, returns AI response."""
     try:
         from openai import OpenAI
-        import httpx as _httpx
+        import json
 
-        api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+        async def _get_tasks(status=None, priority=None, search=None):
+            stmt = select(Task)
+            if status: stmt = stmt.where(Task.status == status)
+            if priority: stmt = stmt.where(Task.priority == priority)
+            if search: stmt = stmt.where(Task.title.ilike(f"%{search}%"))
+            result = await session.execute(stmt)
+            tasks = result.scalars().all()
+            return [{"id": t.id, "title": t.title, "status": t.status, "priority": t.priority, "tags": t.tags, "due_date": str(t.due_date) if t.due_date else None} for t in tasks]
 
-        def _get_tasks(status=None, priority=None, search=None):
-            params = {}
-            if status: params["status"] = status
-            if priority: params["priority"] = priority
-            if search: params["search"] = search
-            r = _httpx.get(f"{api_base}/tasks", params=params, timeout=10)
-            return r.json()
+        async def _create_task(title, priority="medium", tags=None, due_date=None):
+            task = Task(title=title, priority=priority, tags=tags or [], due_date=due_date)
+            session.add(task)
+            await session.commit()
+            await session.refresh(task)
+            return {"id": task.id, "title": task.title, "status": task.status, "priority": task.priority}
 
-        def _create_task(title, priority="medium", tags=None, due_date=None):
-            body = {"title": title, "priority": priority, "tags": tags or []}
-            if due_date: body["due_date"] = due_date
-            r = _httpx.post(f"{api_base}/tasks", json=body, timeout=10)
-            return r.json()
+        async def _update_task(task_id, **kwargs):
+            task = await session.get(Task, task_id)
+            if not task:
+                return {"error": f"Task {task_id} not found"}
+            for k, v in kwargs.items():
+                setattr(task, k, v)
+            task.updated_at = datetime.utcnow()
+            session.add(task)
+            await session.commit()
+            await session.refresh(task)
+            return {"id": task.id, "title": task.title, "status": task.status, "priority": task.priority}
 
-        def _update_task(task_id, **kwargs):
-            r = _httpx.patch(f"{api_base}/tasks/{task_id}", json=kwargs, timeout=10)
-            return r.json()
-
-        def _delete_task(task_id):
-            _httpx.delete(f"{api_base}/tasks/{task_id}", timeout=10)
+        async def _delete_task(task_id):
+            task = await session.get(Task, task_id)
+            if task:
+                await session.delete(task)
+                await session.commit()
             return {"deleted": task_id}
 
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -102,7 +113,6 @@ Be concise and friendly. When listing tasks, format them nicely."""
             messages.append(h)
         messages.append({"role": "user", "content": payload.message})
 
-        import json
         response = client.chat.completions.create(model="gpt-4o-mini", messages=messages, tools=tools, tool_choice="auto")
         msg = response.choices[0].message
 
@@ -112,14 +122,14 @@ Be concise and friendly. When listing tasks, format them nicely."""
                 name = tc.function.name
                 args = json.loads(tc.function.arguments)
                 if name == "get_tasks":
-                    result = _get_tasks(**args)
+                    result = await _get_tasks(**args)
                 elif name == "create_task":
-                    result = _create_task(**args)
+                    result = await _create_task(**args)
                 elif name == "update_task":
                     tid = args.pop("task_id")
-                    result = _update_task(tid, **args)
+                    result = await _update_task(tid, **args)
                 elif name == "delete_task":
-                    result = _delete_task(args["task_id"])
+                    result = await _delete_task(args["task_id"])
                 else:
                     result = {"error": "unknown tool"}
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result, default=str)})
