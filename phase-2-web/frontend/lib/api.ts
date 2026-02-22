@@ -1,6 +1,6 @@
 import { Task, TaskCreate, TaskUpdate } from "@/types/task";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://to-do-app-hackathon-2-production.up.railway.app";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {

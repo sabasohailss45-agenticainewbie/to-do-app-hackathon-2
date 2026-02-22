@@ -18,7 +18,7 @@ export default function ChatBot({ onTasksChanged }: Props) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://to-do-app-hackathon-2-production.up.railway.app";
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
