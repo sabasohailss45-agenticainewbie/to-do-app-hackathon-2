@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Task, TaskCreate, TaskUpdate } from "@/types/task";
 import { api } from "@/lib/api";
 import AddTaskForm from "@/components/AddTaskForm";
@@ -7,6 +7,43 @@ import FilterBar from "@/components/FilterBar";
 import TaskList from "@/components/TaskList";
 import EditTaskModal from "@/components/EditTaskModal";
 import ChatBot from "@/components/ChatBot";
+
+function useTaskNotifications(tasks: Task[]) {
+  const notifiedIds = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+    if (Notification.permission !== "granted") return;
+
+    const now = new Date();
+    tasks.forEach((task) => {
+      if (task.status === "completed" || !task.due_date) return;
+      if (notifiedIds.current.has(task.id)) return;
+
+      const due = new Date(task.due_date);
+      const diffMs = due.getTime() - now.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+
+      if (diffHours <= 24 && diffHours >= 0) {
+        notifiedIds.current.add(task.id);
+        const label = diffHours <= 1 ? "within the hour" : "today";
+        new Notification("Todo Reminder", {
+          body: `"${task.title}" is due ${label}!`,
+          icon: "/favicon.ico",
+        });
+      } else if (diffMs < 0) {
+        notifiedIds.current.add(task.id);
+        new Notification("Overdue Task", {
+          body: `"${task.title}" is overdue!`,
+          icon: "/favicon.ico",
+        });
+      }
+    });
+  }, [tasks]);
+}
 
 interface Filters {
   search: string;
@@ -64,6 +101,8 @@ export default function HomePage() {
     const updated = await api.updateTask(id, data);
     setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
   };
+
+  useTaskNotifications(tasks);
 
   const pending = tasks.filter((t) => t.status === "pending").length;
   const completed = tasks.filter((t) => t.status === "completed").length;
